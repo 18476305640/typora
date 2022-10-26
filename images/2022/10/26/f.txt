@@ -1,0 +1,275 @@
+// ==UserScript==
+// @name         记住阅读进度
+// @namespace    http://tampermonkey.net/
+// @version      2.6.0
+// @description  记住页面阅读进度，即使对于单页面，也能很好的工作！
+// @match      *://*/*
+// @exclude  http://127.0.0.1*
+// @exclude  http://localhost*
+// @author       zhuangjie
+// @icon         data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==
+// @license MIT
+// ==/UserScript==
+
+
+
+(function() {
+   'use strict';
+    // Your code here...
+    // 解决广工商学校选课网无法显示左边栏：原因是脚本中加了 window.onload 有关
+    // 上一个重要版本：https://cdn.jsdelivr.net/gh/18476305640/typora@master/images/2022/10/21/recoverHistorySchedule.js
+
+    // 【何时开始脚本】
+    // 获取滚动历史高度
+    let item_content = localStorage.getItem(getCurrentUrl())
+    let history_high = item_content == null?0:parseFloat(item_content);
+    // 初始化程序
+    do {
+        if(history_high <= getDocumentHeight() || document.readyState == "complete") {
+           init();
+           break;
+        }
+    }while(history_high <= getDocumentHeight() || document.readyState == "complete");
+
+
+    //【函数库】
+    //有动画地滚动
+    let st = null; //保证多次执行 ScrollTo 函数不会相互影响
+    function ScrollTo(scroll, top) {
+        if(st != null ) {
+            //关闭上一次未执行完成的滚动
+            clearInterval(st);
+        }
+        //每次移动的跨度
+        let span = 5;
+        st = setInterval(function () {
+            let currentTop = getCurrentTop();
+            //当在跨度内时，直接到达
+            if (currentTop >= top - span && currentTop <= top + span) {
+                setTop(top);
+                // $(scroll).scrollTop(top);
+                //让st为null，让关闭定时器
+                let tmp_st = st;
+                st = null;
+                //关闭定时器（下一次不会再执行，但本次还会执行下去），再return;
+                clearInterval(tmp_st);
+                // console.log("滚动完成",top+"<is>"+ getCurrentTop() )
+                return;
+            }
+            //如果不在跨度内时，根据当前的位置与目的位置进行上下移动指定跨度
+            if (currentTop < top) {
+                setTop(currentTop + span)
+            } else {
+                setTop(currentTop - span)
+            }
+            span++
+        }, 20)
+    }
+
+    function onUrlChange(fun) {
+        let initUrl = window.location.href.split("#")[0];
+        setInterval(function () {
+            let currentUrl =  window.location.href.split("#")[0];
+            if(initUrl != currentUrl) {
+               // console.log("url改变了")
+               fun();
+               initUrl = currentUrl;
+            }
+        },460)
+    }
+    // 获取url，url经过了处理
+    function getCurrentUrl() {
+       return window.location.href.split("#")[0]
+    }
+    // 获取存储标记，用于存储滚动“责任人”
+    function getCurrentPageWhoRoll() {
+        return getCurrentUrl()+"<and>WhoRoll";
+    }
+    // 获取当前滚动的高度
+    function getCurrentTop() {
+       return document.documentElement.scrollTop || document.body.scrollTop;
+    }
+    // 获取文档高度
+    function getDocumentHeight() {
+       // 获取最大高度
+       return (document.documentElement.scrollHeight > document.body.scrollHeight?document.documentElement.scrollHeight:document.body.scrollHeight)
+    }
+    // 到达指定高度
+    function setTop(h,isCheck = true) {
+        let whoRoll = localStorage.getItem(getCurrentPageWhoRoll())
+        if(!isCheck) {
+            document.documentElement.scrollTop = h;
+            document.body.scrollTop = h;
+            return;
+        }
+        if(whoRoll == "document") {
+            if(getDocumentHeight() >= h ) {
+                // console.log("document恢复")
+                document.documentElement.scrollTop = h;
+            }
+        }else {
+            if(getDocumentHeight() >= h ) {
+                // console.log("body恢复")
+                document.body.scrollTop = h;
+            }
+        }
+
+    }
+
+    // 判断是否在滚动
+    function onNotScrolling(callback,isMonitor = false) {
+       // 如果不在滚动调用回调
+       let h1 = parseInt(getCurrentTop());
+       setTimeout(function() {
+          let h2 = parseInt(getCurrentTop());
+          if(h1 == h2) {
+             callback();
+          }else if(isMonitor){
+             onNotScrolling(callback,true);
+          }
+       },50)
+    }
+    // 检查是否到达指定位置
+    function checkIsArriveHeight(time,expectHeight = 0,callback,flag = true) {
+       setTimeout(function() {
+           let top_down_scope = 200/2;
+           let currentHiehgt = getCurrentTop();
+           if(!(expectHeight >= currentHiehgt-top_down_scope && expectHeight <= currentHiehgt+top_down_scope)) {
+              // 如果不在滚动，会执行下面传入的回调
+              onNotScrolling(callback);
+           }else {
+              console.log("恢复成功")
+           }
+       },time)
+       return null;
+    }
+    // // 【显示高度】 显示高度视图
+    (function () {
+        let scheduleBox=document.createElement("div");
+
+        scheduleBox.innerText = "helloworld";
+        scheduleBox.id = "schedule_box";
+        scheduleBox.style.cssText=`
+           display:none;
+           height: 35px;
+           line-height: 35px;
+           font-size: 15px;
+           position: fixed;
+           right: 20px;
+           top: 20px;
+           z-index: 10000;
+           padding: 0px 10px;
+           background: #333333;
+           color: #fff;
+           overflow: hidden;
+        `;
+
+        // 进度显示防抖关闭函数
+        function showSchedule_debounce(fn, wait) {
+            var timeout = null;
+            return function() {
+                window.showSchedule();
+                if(timeout != null ) clearTimeout(timeout);
+                timeout= setTimeout (fn,wait);
+            }
+        }
+        // 处理函数
+        function showSchedule_handle() {
+            // 关闭容器
+            scheduleBox.style.display="none";
+        }
+        /* (function(){
+           window._tmpTime = 2000;
+           window.tmpTime  = _tmpTime;
+           window.tmpSetStayTime = function(time) {
+              window.tmpTime = time;
+              // 恢复到原来的停留时间
+              setTimeout(function() {
+                 window.tmpTime = null;
+              },time)
+           }
+        })();*/
+        window.addEventListener('scroll',showSchedule_debounce(showSchedule_handle,2000));
+        document.body.appendChild(scheduleBox);
+        window.showSchedule = function(content) {
+            // 显示容器
+            scheduleBox.style.display="block";
+            // 将 当前进度/ 总进度 放在显示容器中
+
+            scheduleBox.innerHTML = content || parseInt(getCurrentTop())+" / "+parseInt(getDocumentHeight() - window.innerHeight);
+            let scheduleChild=document.createElement("div");
+            scheduleChild.style.cssText=`
+              height: 100%;
+              background: rgba(26, 173, 25,0.5);
+              position: absolute;
+              top: 0px;
+              left: 0px;
+        `   ;
+            scheduleBox.appendChild(scheduleChild);
+            scheduleChild.style.width = scheduleBox.clientWidth*((getCurrentTop())/parseInt(getDocumentHeight() - window.innerHeight))+"px";
+            // 防抖关闭显示视图容器 -- 在上面的闭包中的监听了滚动
+        }
+
+    })();
+
+
+
+
+
+    // 【主程序】
+    function init() {
+        // 【位置还原】
+        function recover() {
+            let item_content = localStorage.getItem(getCurrentUrl())
+            // 有记录
+            if (item_content == null) return;
+            // 获取历史高度
+            let history_high = parseFloat(item_content);
+            // 现在文档的高度
+            let current_height = getDocumentHeight();
+            // 如果没有历史高度，且高度不大于10就不还原
+            if(history_high != null &&  history_high >= 10 ) {
+                // 直接还原到历史位置
+                setTop(history_high);
+                // 检查是否恢复成功
+                checkIsArriveHeight(2000,history_high, function() {
+                    console.log("无法恢复,启动后备工作")
+                    setTop(history_high,false)
+                });
+            }
+        }
+        recover(); // 进入页面时还原
+        onUrlChange(recover)
+        // 【位置保存】
+        function debounce(fn, wait) {
+             var timeout = null;
+             return function() {
+                 if(timeout != null ) clearTimeout(timeout);
+                 timeout= setTimeout (fn, wait);
+             }
+         }
+        // 处理函数
+        function handle() {
+
+            // console.log(document.documentElement.scrollTop , document.body.scrollTop )
+            let current_top = getCurrentTop();
+            let current_url = getCurrentUrl()
+            if(document.documentElement.scrollTop >  document.body.scrollTop ) {
+                localStorage.setItem(getCurrentPageWhoRoll(),"document")
+            }else {
+                localStorage.setItem(getCurrentPageWhoRoll(),"body")
+            }
+            if(current_top <= 10) return;
+            console.log(">>>[记住历史进度] 保存位置：",current_url,current_top+"px");
+            // console.log(">>> 滚动责任：",localStorage.getItem(getCurrentPageWhoRoll()));
+            localStorage.setItem(current_url,""+current_top)
+        }
+        // 滚动事件
+        window.addEventListener('scroll',debounce(handle, 460));
+
+    }
+
+
+
+
+})();
